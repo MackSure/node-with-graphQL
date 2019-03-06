@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const pdfDocument = require('pdfkit');
+const stripe = require('stripe')('sk_test_Sw5PDK8HpPjBisgzNaYaKVud');
 
 const Product = require('../models/product');
 const Order = require('../models/order');
@@ -19,7 +20,7 @@ exports.getProducts = (req, res, next) => {
         limit: ITEMS_PER_PAGE,
         offset
     }).then(products => {
-        console.log('getProducts----------------', products)
+       
         res.render('shop/product-list', {
             products: products.rows,
             pageTitle: 'All Products',
@@ -33,7 +34,7 @@ exports.getProducts = (req, res, next) => {
             lastPage: Math.ceil(products.count / ITEMS_PER_PAGE)
         })
     }).catch(err => {
-        console.log('error===========', err)
+        
         const error = new Error(err);
         error.httpStatusCode = 500;
         return next(error);
@@ -83,7 +84,7 @@ exports.getIndex = (req, res, next) => {
             lastPage: Math.ceil(products.count / ITEMS_PER_PAGE)
         });
     }).catch(err => {
-        console.log('err----------------------', err)
+        
         const error = new Error(err);
         error.httpStatusCode = 500;
         return next(error);
@@ -93,7 +94,6 @@ exports.getIndex = (req, res, next) => {
 exports.getCart = (req, res, next) => {
     req.user.getCart()
         .then(cart => {
-            console.log(cart)
             cart.getProducts()
                 .then(products => {
                     res.render('shop/cart', {
@@ -114,7 +114,6 @@ exports.postCart = (req, res, next) => {
     const prodId = req.body.productId;
     let fetchedCart;
     let newQuantity = 1;
-    console.log(req.user.getCart)
     req.user
         .getCart()
         .then(cart => {
@@ -195,6 +194,9 @@ exports.getOrders = (req, res, next) => {
 };
 
 exports.postOrder = (req, res, next) => {
+    console.log('+++++++++++++++++++++++++++++++++++++++++++++++++++++++')
+    const token = req.body.stripeToken; 
+    let totalSum = 0;
     let fetchedCart;
     req.user
         .getCart()
@@ -203,25 +205,34 @@ exports.postOrder = (req, res, next) => {
             return cart.getProducts();
         })
         .then(products => {
+            products.forEach(product => {
+                totalSum += product.price * product.cartItem.quantity
+            });
+
             return req.user
                 .createOrder()
                 .then(order => {
-                    return order.addProducts(
+                    order.addProducts(
                         products.map(product => {
                             product.orderItem = {
                                 quantity: product.cartItem.quantity
                             };
                             return product;
                         })
-                    );
+                    )
+                    return order;
+                }).then(order => {
+                    return stripe.charges.create({
+                        amount: totalSum * 100,
+                        currency: 'usd',
+                        description: 'Demo Order',
+                        source: token,
+                        metadata: { order_id: order.id }
+                      });
                 })
-                .catch(err => console.log(err));
-        })
+        }).then(() => res.redirect('/orders'))
         .then(result => {
             return fetchedCart.setProducts(null);
-        })
-        .then(result => {
-            res.redirect('/orders');
         })
         .catch(err => {
             const error = new Error(err);
@@ -233,11 +244,12 @@ exports.postOrder = (req, res, next) => {
 exports.getCheckout = (req, res, next) => {
     req.user.getCart()
         .then(cart => {
+
             cart.getProducts()
                 .then(products => {
-                    let totalPrice;
+                    let totalPrice = 0;
                     products.forEach(product =>  {
-                       totalPrice =  product.price * product.cartItem.quantity
+                       totalPrice +=  product.price * product.cartItem.quantity
                     })
                     res.render('shop/checkout', {
                         path: '/checkout',
